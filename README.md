@@ -29,19 +29,26 @@ A streaming query can emit its first row long before the scan producing the
 rest has finished. v1.5.5 does. v2.0.0-alpha does not: its first row now waits
 on a large part of the scan, and the wait grows with the scan.
 
-| version | rows scanned | first row | total |
-|---|---:|---:|---:|
-| v1.5.5 | 20,000,000 | **17 ms** | 152 ms |
-| v2.0.0-alpha42839 | 20,000,000 | **143 ms** | 154 ms |
-| v1.5.5 | 200,000,000 | **17 ms** | 1375 ms |
-| v2.0.0-alpha42839 | 200,000,000 | **298 ms** | 1196 ms |
+| shape | rows scanned | version | first row | total |
+|---|---:|---|---:|---:|
+| `UNION ALL` | 20,000,000 | v1.5.5 | **19 ms** | 183 ms |
+| `UNION ALL` | 20,000,000 | v2.0.0-alpha42839 | **150 ms** | 163 ms |
+| `UNION ALL` | 200,000,000 | v1.5.5 | **18 ms** | 1393 ms |
+| `UNION ALL` | 200,000,000 | v2.0.0-alpha42839 | **304 ms** | 1247 ms |
+| plain scan | 20,000,000 | v1.5.5 | **16 ms** | 155 ms |
+| plain scan | 20,000,000 | v2.0.0-alpha42839 | **151 ms** | 164 ms |
+| plain scan | 200,000,000 | v1.5.5 | **17 ms** | 1387 ms |
+| plain scan | 200,000,000 | v2.0.0-alpha42839 | **301 ms** | 1215 ms |
 
-Medians of five runs on an otherwise idle machine. Absolute numbers move a
-lot with load; the ratio does not. v1.5.5's first-row latency is flat in the
-scan size;
-the alpha's scales with it. Note the alpha is ~13% *faster* end to end at the
-larger size — this reads like a deliberate trade of latency for throughput,
-but it is a large one, and it is not obviously intended at this magnitude.
+Medians of five runs. Absolute numbers move with machine load; the ratio does
+not. v1.5.5's first-row latency is flat in the scan size — 16-19 ms whether it
+scans 20 million rows or 200 million. The alpha's scales with it: 150 ms, then
+300 ms. Both query shapes behave identically, so this is not about `UNION ALL`.
+
+The alpha is *faster* end to end at the larger size — 1247 ms against 1393 ms.
+This reads like a deliberate trade of latency for throughput, but it is a large
+one, and a ~17x first-row regression seems unlikely to be the intended size of
+it.
 
 ```sql
 COPY (
@@ -50,8 +57,6 @@ COPY (
   SELECT '<li>' || i || '</li>' FROM range(20000000) r(i) WHERE (r.i * 2654435761) % 97 = 3
 ) TO '/dev/stdout' (FORMAT csv);
 ```
-
-It is not specific to `UNION ALL` — a plain filtered scan behaves the same way.
 
 **Why it matters.** Anything that streams a response out as it is produced —
 an HTTP response, a pipe into another process — pays the whole latency before
