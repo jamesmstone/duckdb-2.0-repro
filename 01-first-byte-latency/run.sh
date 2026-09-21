@@ -23,26 +23,29 @@ SQL
 
 # Time to the first row, and to the last, in milliseconds. The whole result is
 # drained so the total is a real completion time rather than a broken pipe.
+# The first-row stamp has to leave the pipeline's subshell, hence the file.
 measure() {
-  local db=$1 n=$2 start first end
+  local db=$1 n=$2 start first end stamp
+  stamp=$(mktemp)
   start=$(date +%s%N)
   "$db" -c "$(sql "$n")" 2>/dev/null | {
-    IFS= read -r _first_line
-    date +%s%N > .first
+    IFS= read -r _line
+    date +%s%N > "$stamp"
     cat > /dev/null
   }
   end=$(date +%s%N)
-  first=$(cat .first); rm -f .first
+  first=$(cat "$stamp")
+  rm -f "$stamp"
   echo "$(( (first - start) / 1000000 )) $(( (end - start) / 1000000 ))"
 }
 
-median() { tr ' ' '\n' | sort -n | awk '{v[NR]=$1} END {print v[int((NR+1)/2)]}'; }
+median() { tr ' ' '\n' | grep -v '^$' | sort -n | awk '{v[NR]=$1} END {print v[int((NR+1)/2)]}'; }
 
 printf '%-18s %-12s %14s %12s\n' version rows first-row-ms total-ms
 printf '%-18s %-12s %14s %12s\n' ------- ---- ------------ --------
 for n in $SIZES; do
-  for db_name in stable alpha; do
-    db=$("duckdb_$db_name")
+  for which in stable alpha; do
+    db=$("duckdb_$which")
     version=$("$db" -noheader -list -c 'select version();')
     firsts=(); totals=()
     for _ in $(seq "$REPS"); do
