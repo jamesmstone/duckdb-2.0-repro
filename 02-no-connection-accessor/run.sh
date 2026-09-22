@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Shows that a V2 C extension cannot reach the instance it was loaded into.
+# Shows that a V2 C extension cannot reach the instance it was loaded into,
+# and that V1 never promised it could either.
 #
 # Proved against the headers rather than by building an extension: the claim is
 # about which entries exist, and the header is the whole surface.
@@ -30,7 +31,8 @@ echo
 echo "what the entrypoint is handed:"
 awk '/duckdb_v2_extension_input \{/,/\};/' "$core" | grep -E '^[[:space:]]+(duckdb_v2|[a-z])' | sed 's/^/  /'
 echo
-cat <<'TXT'
+
+cat <<'BODY'
 A connection comes only from connection_create, which needs an instance; an
 instance comes only from instance_create, which makes a NEW one from an
 environment. Nothing maps the extension or context handle the entrypoint
@@ -38,10 +40,24 @@ receives onto either, and the context is documented "Valid only until the
 extension entrypoint returns; do not retain or destroy it".
 
 The seven *_with_extension entries register functions, and that is the whole
-of what an extension handle can do.
+of what an extension handle can do. A V2 scalar's exec callback does receive a
+context, but a context creates types, logs, and reads options --- it does not
+run queries.
 
-So an extension that must hold a connection for the life of the process ---
-to serve a request, or to write outside the transaction of the query that
-invoked it --- cannot obtain one. Under V1 the entrypoint is handed the
-database directly, via duckdb_extension_access.get_database.
-TXT
+V1 is not a counter-example. It hands the entrypoint a database, and an
+extension CAN open a connection from it and keep one --- but the V1 header
+says not to:
+BODY
+echo
+grep -A2 'Custom entrypoint: just forwards' "$(v1_header)" | sed 's/^/  /'
+echo
+cat <<'BODY'
+and V1's own DUCKDB_EXTENSION_ENTRYPOINT macro calls duckdb_disconnect before
+returning. So retaining a connection past init was never promised; V2 closes
+off what V1 left possible by omission.
+
+What is missing in both is a supported way for an extension to run a query
+outside its entrypoint --- on its own threads, or for a write that cannot
+reuse the connection running the outer SELECT, because that one is
+mid-statement.
+BODY

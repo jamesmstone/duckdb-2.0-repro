@@ -3,8 +3,10 @@
 Three small, self-contained reproductions, found while porting a DuckDB
 extension and its host application to the 2.0 alpha.
 
-One is a performance regression; two are gaps in the new V2 C extension API
-that leave an existing V1 extension with nowhere to go.
+One is a performance regression. One is a stable V1 API entry with no V2
+equivalent. The third is a capability V1 never promised and V2 forecloses
+entirely, which is a feature request rather than a bug --- it is written up
+that way.
 
 Recorded against **`v2.0.0-alpha42839`** (`duckdb/duckdb@31adc8b766`) and
 compared against **`v1.5.5`**.
@@ -62,9 +64,11 @@ COPY (
 an HTTP response, a pipe into another process — pays the whole latency before
 its first byte moves.
 
-## 2. A V2 extension cannot reach the instance it was loaded into
+## 2. No supported way for an extension to hold a connection
 
 `02-no-connection-accessor/`
+
+**This is a feature request, not a regression** — see the caveat below.
 
 The V2 entrypoint receives `extension`, `context` and an error slot. A
 connection comes only from `duckdb_v2_connection_create`, which needs an
@@ -75,19 +79,39 @@ the instance the extension is running inside, and the context is documented as
 > Valid only until the extension entrypoint returns; do not retain or destroy it.
 
 The seven `*_with_extension` entries register functions; that is everything an
-extension handle can do.
+extension handle can do. Function callbacks fare no better: a V2 scalar's exec
+receives a context, but a context can create types, log, and read options —
+not run a query.
 
-Under V1, the entrypoint is handed the database directly via
-`duckdb_extension_access.get_database`, and extensions open a connection from
-it and keep it.
+### The caveat: V1 never promised this either
 
-**Why it matters.** An extension that must hold a connection for the life of
-the process cannot be written against V2 — one that serves requests on its own
-threads, or that writes outside the transaction of the query that invoked it
-(a write cannot reuse the connection running the outer `SELECT`).
+V1 hands the entrypoint a database via `duckdb_extension_access.get_database`,
+and an extension can open a connection from it and keep it. That works. But
+the V1 header is explicit that it should not:
 
-**What would fix it.** An accessor from the extension or context handle to the
-running instance, or directly to a connection.
+> Both, and any database returned by `access->get_database(info)`, are
+> **borrowed for the duration of the entrypoint and must not be retained or
+> destroyed.**
+
+and its own `DUCKDB_EXTENSION_ENTRYPOINT` macro calls `duckdb_disconnect`
+before returning. So an extension that retains a connection past init is
+relying on undocumented behaviour that happens to hold, not on a promise. V2
+does not remove a guarantee; it closes off something V1 left possible by
+omission.
+
+### Why it is still worth having
+
+An extension that must run a query outside the entrypoint has no supported
+path in either API:
+
+- work on its own threads, servicing something that outlives one query;
+- a write that cannot reuse the connection running the outer `SELECT`, because
+  that one is mid-statement.
+
+Today the only way to do either is the undocumented V1 route, and under V2 not
+even that. An accessor from the extension or context handle to the running
+instance — or a documented way to obtain a connection with a stated lifetime —
+would make this supportable rather than accidental.
 
 ## 3. A V2 extension cannot register a setting
 
